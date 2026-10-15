@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { InputRef } from 'antd';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Tabs, Table, Button, Modal, Form, Input, InputNumber, Select, Checkbox, App, Tag, Space, Typography, Divider, Row, Col, Card,
+  Tabs, Table, Button, Modal, Form, Input, InputNumber, Select, Checkbox, App, Tag, Space, Typography, Row, Col, Card,
 } from 'antd';
 import { PlusOutlined, ReloadOutlined, SearchOutlined, EditOutlined } from '@ant-design/icons';
 import { api, mensajeError } from '../api/client';
@@ -38,9 +37,9 @@ interface Opcion { id: number; nombre: string }
 interface Unidad extends Opcion { codigo: string }
 
 /**
- * Select con creación al vuelo: escribe un nombre y presiona Enter o el botón
- * "Crear «...»" para registrar una marca/presentación/producto nuevo sin salir
- * del formulario (resuelve la combinación única producto+marca+presentación — RF-01).
+ * Select con creación directa: el campo para registrar una ${etiqueta} nueva
+ * vive FUERA del desplegable (debajo del select) para evitar que el popup
+ * del select robe el foco. Flujo: pulsar "+ Nueva" → escribir → Crear.
  */
 function SelectCreable({
   value,
@@ -60,9 +59,9 @@ function SelectCreable({
   onCreado: () => void;
 }) {
   const { message } = App.useApp();
+  const [modoCreacion, setModoCreacion] = useState(false);
   const [nuevoNombre, setNuevoNombre] = useState('');
   const [creando, setCreando] = useState(false);
-  const inputRef = useRef<InputRef>(null);
 
   const crear = async () => {
     const nombre = nuevoNombre.trim();
@@ -70,10 +69,11 @@ function SelectCreable({
     setCreando(true);
     try {
       const { data } = await api.post<Opcion>(endpoint, { nombre });
-      message.success(`"${nombre}" creado correctamente`);
+      message.success(`"${nombre}" creado y seleccionado`);
       onCreado();
       onChange?.(data.id);
       setNuevoNombre('');
+      setModoCreacion(false);
     } catch (e) {
       message.error(mensajeError(e, `No se pudo crear "${nombre}"`));
     } finally {
@@ -82,57 +82,47 @@ function SelectCreable({
   };
 
   return (
-    <Select
-      showSearch
-      value={value}
-      onChange={(v) => onChange?.(v as number)}
-      placeholder={placeholder}
-      optionFilterProp="label"
-      options={opciones.map((o) => ({ value: o.id, label: o.nombre }))}
-      notFoundContent="Sin datos todavía: use el campo de abajo para crear el primero"
-      popupRender={(menu) => (
-        <>
-          {menu}
-          <Divider style={{ margin: '8px 0' }} />
-          <div
-            style={{ display: 'flex', gap: 8, padding: '0 8px 8px' }}
-            // preventDefault impide que el select robe el foco con su manejador interno;
-            // luego enfocamos explícitamente nuestro campo de creación
-            onMouseDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              inputRef.current?.focus();
-            }}
-          >
-            <Input
-              ref={inputRef}
-              size="small"
-              placeholder={`Nombre de la ${etiqueta} nueva`}
-              value={nuevoNombre}
-              onChange={(e) => setNuevoNombre(e.target.value)}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  crear();
-                }
-              }}
-              allowClear
-            />
-            <Button
-              type="primary"
-              size="small"
-              icon={<PlusOutlined />}
-              loading={creando}
-              disabled={!nuevoNombre.trim()}
-              onClick={crear}
-            >
-              Crear
-            </Button>
-          </div>
-        </>
+    <div>
+      <Space.Compact style={{ width: '100%' }}>
+        <Select
+          showSearch
+          style={{ flex: 1, minWidth: 0 }}
+          value={value}
+          onChange={(v) => onChange?.(v as number)}
+          placeholder={placeholder}
+          optionFilterProp="label"
+          options={opciones.map((o) => ({ value: o.id, label: o.nombre }))}
+          notFoundContent={`Sin ${etiqueta}s registradas todavía: use "+ Nueva" para crear la primera`}
+        />
+        <Button
+          icon={<PlusOutlined />}
+          onClick={() => setModoCreacion((v) => !v)}
+          title={`Registrar una ${etiqueta} nueva`}
+          style={{ flexShrink: 0 }}
+        >
+          Nueva
+        </Button>
+      </Space.Compact>
+      {modoCreacion && (
+        <Space.Compact style={{ width: '100%', marginTop: 8 }}>
+          <Input
+            autoFocus
+            placeholder={`Nombre de la nueva ${etiqueta}…`}
+            value={nuevoNombre}
+            onChange={(e) => setNuevoNombre(e.target.value)}
+            onPressEnter={crear}
+            suffix={
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Enter para crear
+              </Typography.Text>
+            }
+          />
+          <Button type="primary" loading={creando} disabled={!nuevoNombre.trim()} onClick={crear}>
+            Crear
+          </Button>
+        </Space.Compact>
       )}
-    />
+    </div>
   );
 }
 
