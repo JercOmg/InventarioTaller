@@ -1,0 +1,691 @@
+// ============================================================
+// SISTEMA DE INVENTARIO PARA FERRETERÍA — Esquema de datos
+// Motor: PostgreSQL | ORM: Prisma
+// Derivado de los requerimientos RF-01..RF-25 / RNF-01..RNF-06
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// SEGURIDAD Y RBAC — RF-21, RNF-05
+// ------------------------------------------------------------
+model Rol {
+  id        Int      @id @default(autoincrement())
+  codigo    String   @unique @db.VarChar(30) // ADMIN, GERENCIA, RESPONSABLE_INVENTARIO, VENTAS, COMPRAS
+  nombre    String   @unique @db.VarChar(50)
+  descripcion String? @db.Text
+  usuarios  UsuarioRol[]
+  permisos  RolPermiso[]
+  createdAt DateTime @default(now()) @map("fecha_creacion")
+
+  @@map("roles")
+}
+
+model Permiso {
+  id        Int    @id @default(autoincrement())
+  codigo    String @unique @db.VarChar(60) // ej: catalogo.crear, ventas.facturar
+  modulo    String @db.VarChar(40)
+  descripcion String @db.Text
+  roles     RolPermiso[]
+
+  @@map("permisos")
+}
+
+model RolPermiso {
+  rolId     Int
+  permisoId Int
+  rol       Rol     @relation(fields: [rolId], references: [id], onDelete: Cascade)
+  permiso   Permiso @relation(fields: [permisoId], references: [id], onDelete: Cascade)
+
+  @@id([rolId, permisoId])
+  @@map("rol_permiso")
+}
+
+model Usuario {
+  id            Int    @id @default(autoincrement())
+  nombreCompleto String @db.VarChar(100) @map("nombre_completo")
+  nombreUsuario String @unique @db.VarChar(50) @map("nombre_usuario")
+  passwordHash  String @db.VarChar(255) @map("password_hash")
+  activo        Boolean @default(true)
+  email         String? @db.VarChar(100)
+  createdAt     DateTime @default(now()) @map("fecha_creacion")
+  updatedAt     DateTime @default(now()) @updatedAt @map("fecha_actualizacion")
+
+  roles          UsuarioRol[]
+  auditorias     AuditoriaLog[]
+  ordenesCompra  OrdenCompra[]
+  documentosIngreso DocumentoIngreso[] @relation("ingresoCreador")
+  ventas         Venta[]
+  reservas       Reserva[]
+  ajustesSolicita Ajuste[] @relation("ajusteSolicita")
+  ajustesAprueba Ajuste[] @relation("ajusteAprueba")
+  cierres        CierreMensual[] @relation("cierreUsuario")
+  reabreCierres  CierreMensual[] @relation("reaperturaUsuario")
+  preciosHistorial HistorialPrecio[]
+  movimientos    MovimientoInventario[]
+  devolucionesClienteRecibe DevolucionCliente[] @relation("devCliRecibe")
+  devolucionesClienteAprueba DevolucionCliente[] @relation("devCliAprueba")
+  devolucionesProveedor DevolucionProveedor[]
+  bajasVencimiento BajaVencimiento[] @relation("bajasVencimiento")
+  migraciones    Migracion[]
+
+  @@map("usuarios")
+}
+
+model UsuarioRol {
+  usuarioId Int
+  rolId     Int
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  rol       Rol     @relation(fields: [rolId], references: [id], onDelete: Cascade)
+
+  @@id([usuarioId, rolId])
+  @@map("usuario_rol")
+}
+
+// ------------------------------------------------------------
+// TERCEROS (CLIENTES Y PROVEEDORES) — RF-14
+// ------------------------------------------------------------
+model Tercero {
+  id            Int     @id @default(autoincrement())
+  identificacion String @unique @db.VarChar(50)
+  tipoPersona   String  @default("NATURAL") @db.VarChar(15) @map("tipo_persona") // NATURAL | JURIDICA
+  nombre        String? @db.VarChar(100)  // persona natural
+  apellido      String? @db.VarChar(100)  // persona natural
+  razonSocial   String? @db.VarChar(150) @map("razon_social") // persona jurídica
+  direccion     String? @db.VarChar(200)
+  ciudad        String? @db.VarChar(100)
+  telefono      String? @db.VarChar(30)
+  email         String? @db.VarChar(100)
+  esCliente     Boolean @default(false) @map("es_cliente")
+  esProveedor   Boolean @default(false) @map("es_proveedor")
+  activo        Boolean @default(true)
+  createdAt     DateTime @default(now()) @map("fecha_registro")
+  updatedAt     DateTime @default(now()) @updatedAt @map("fecha_actualizacion")
+
+  ordenesCompra     OrdenCompra[]
+  documentosIngreso DocumentoIngreso[]
+  ventas            Venta[]
+  reservas          Reserva[]
+  devolucionesProveedor DevolucionProveedor[]
+
+  @@map("terceros")
+}
+
+// ------------------------------------------------------------
+// CATÁLOGO Y REFERENCIAS — RF-01, RF-02, RF-12, RF-13
+// ------------------------------------------------------------
+model Marca {
+  id          Int    @id @default(autoincrement())
+  nombre      String @unique @db.VarChar(100)
+  referencias ReferenciaVendible[]
+
+  @@map("marcas")
+}
+
+model Presentacion {
+  id          Int    @id @default(autoincrement())
+  nombre      String @unique @db.VarChar(100)
+  referencias ReferenciaVendible[]
+
+  @@map("presentaciones")
+}
+
+model Producto {
+  id                Int     @id @default(autoincrement())
+  nombre            String  @db.VarChar(150)
+  descripcion       String? @db.Text
+  controlVencimiento Boolean @default(false) @map("control_vencimiento")
+  mesesGarantia     Int     @default(0) @map("meses_garantia")
+  activo            Boolean @default(true)
+  createdAt         DateTime @default(now()) @map("fecha_creacion")
+  updatedAt         DateTime @default(now()) @updatedAt @map("fecha_actualizacion")
+
+  referencias ReferenciaVendible[]
+  conversiones ConversionUnidad[]
+
+  @@map("productos")
+}
+
+model UnidadMedida {
+  id          Int    @id @default(autoincrement())
+  codigo      String @unique @db.VarChar(10) // UND, KG, M, GL...
+  nombre      String @db.VarChar(50)
+  referencias ReferenciaVendible[] @relation("unidadBase")
+  conversionesOrigen ConversionUnidad[] @relation("conversionOrigen")
+  conversionesDestino ConversionUnidad[] @relation("conversionDestino")
+
+  @@map("unidades_medida")
+}
+
+/// Conversiones parametrizables por producto — RF-02 (ej: 1 Rollo = 100 Metros)
+model ConversionUnidad {
+  id              Int    @id @default(autoincrement())
+  productoId      Int    @map("producto_id")
+  unidadOrigenId  Int    @map("unidad_origen_id")
+  unidadDestinoId Int    @map("unidad_destino_id")
+  factor          Decimal @db.Decimal(18, 6) // cantidad en destino por 1 unidad de origen
+  producto        Producto     @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  unidadOrigen    UnidadMedida @relation("conversionOrigen", fields: [unidadOrigenId], references: [id])
+  unidadDestino   UnidadMedida @relation("conversionDestino", fields: [unidadDestinoId], references: [id])
+
+  @@unique([productoId, unidadOrigenId, unidadDestinoId])
+  @@map("conversiones_unidad")
+}
+
+/// Referencia vendible = Producto + Marca + Presentación — RF-01
+model ReferenciaVendible {
+  id             Int     @id @default(autoincrement())
+  productoId     Int     @map("producto_id")
+  marcaId        Int     @map("marca_id")
+  presentacionId Int     @map("presentacion_id")
+  codigoBarras   String  @unique @db.VarChar(100) @map("codigo_barras")
+  nombre         String? @db.VarChar(200) // descriptivo opcional (concat por defecto)
+  unidadBaseId   Int     @map("unidad_base_id")
+  fraccionMinima Decimal @default(1) @db.Decimal(10, 4) @map("fraccion_minima")
+  decimales      Int     @default(2) // precisión para fraccionamiento — RF-02
+  ivaPorcentaje  Decimal @default(19) @db.Decimal(5, 2) @map("iva_porcentaje")
+  costoPromedio  Decimal @default(0) @db.Decimal(15, 4) @map("costo_promedio")
+  precioVenta    Decimal @default(0) @db.Decimal(15, 4) @map("precio_venta")
+  estado         String  @default("ACTIVO") @db.VarChar(20) // ACTIVO | INACTIVO
+  createdAt      DateTime @default(now()) @map("fecha_creacion")
+  updatedAt      DateTime @default(now()) @updatedAt @map("fecha_actualizacion")
+
+  producto     Producto   @relation(fields: [productoId], references: [id])
+  marca        Marca      @relation(fields: [marcaId], references: [id])
+  presentacion Presentacion @relation(fields: [presentacionId], references: [id])
+  unidadBase   UnidadMedida @relation("unidadBase", fields: [unidadBaseId], references: [id])
+
+  saldos          InventarioSaldo?
+  movimientos     MovimientoInventario[]
+  ingresos        IngresoDetalle[]
+  ordenes         OrdenDetalle[]
+  ventasDetalle   VentaDetalle[]
+  reservasDetalle ReservaDetalle[]
+  precios         HistorialPrecio[]
+  costos          HistorialCosto[]
+  ajustesDetalle  AjusteDetalle[]
+  devolucionesClienteDetalle DevolucionClienteDetalle[]
+  devolucionesProveedorDetalle DevolucionProveedorDetalle[]
+  bajasVencimiento BajaVencimiento[]
+  garantiasRef Garantia[]
+
+  @@unique([productoId, marcaId, presentacionId])
+  @@map("referencias_vendibles")
+}
+
+// ------------------------------------------------------------
+// INVENTARIO — RF-03, RNF-03 (saldos nunca negativos)
+// ------------------------------------------------------------
+model InventarioSaldo {
+  referenciaId       Int     @id @map("referencia_id")
+  cantidadDisponible Decimal @default(0) @db.Decimal(15, 4) @map("cantidad_disponible")
+  cantidadReservada  Decimal @default(0) @db.Decimal(15, 4) @map("cantidad_reservada")
+  cantidadDanada     Decimal @default(0) @db.Decimal(15, 4) @map("cantidad_danada")
+  updatedAt          DateTime @default(now()) @updatedAt @map("fecha_actualizacion")
+
+  referencia ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+
+  @@map("inventario_saldos")
+}
+
+/// Kardex: libro mayor de movimientos tipificados — RF-03, RF-19, RF-22
+model MovimientoInventario {
+  id            BigInt   @id @default(autoincrement())
+  tipo          String   @db.VarChar(10) // ENTRADA | SALIDA
+  clase         String   @db.VarChar(30) // COMPRA, VENTA, AJUSTE, DEVOLUCION_CLIENTE, DEVOLUCION_PROVEEDOR, DANIFICACION, BAJA_VENCIMIENTO, RESERVA, LIBERACION_RESERVA, CONSUMO_RESERVA, MIGRACION
+  referenciaId  Int      @map("referencia_id")
+  cantidad      Decimal  @db.Decimal(15, 4) // siempre positiva; el tipo indica el efecto
+  disponibleAntes Decimal @db.Decimal(15, 4) @map("disponible_antes")
+  reservadaAntes  Decimal @default(0) @db.Decimal(15, 4) @map("reservada_antes")
+  danadaAntes     Decimal @default(0) @db.Decimal(15, 4) @map("danada_antes")
+  disponibleDespues Decimal @db.Decimal(15, 4) @map("disponible_despues")
+  reservadaDespues  Decimal @default(0) @db.Decimal(15, 4) @map("reservada_despues")
+  danadaDespues     Decimal @default(0) @db.Decimal(15, 4) @map("danada_despues")
+  docTipo       String?  @db.VarChar(40) @map("doc_tipo") // DocumentoIngreso, Venta, Ajuste...
+  docId         Int?     @map("doc_id")
+  usuarioId     Int      @map("usuario_id")
+  fecha         DateTime @default(now())
+  detalle       String?  @db.Text
+
+  referencia   ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+  usuario      Usuario           @relation(fields: [usuarioId], references: [id])
+
+  @@index([referenciaId, fecha])
+  @@index([clase, fecha])
+  @@map("movimientos_inventario")
+}
+
+// ------------------------------------------------------------
+// COMPRAS Y RECEPCIONES PARCIALES — RF-06, RF-07
+// ------------------------------------------------------------
+model OrdenCompra {
+  id           Int      @id @default(autoincrement())
+  consecutivo  String   @unique @db.VarChar(50)
+  proveedorId  Int      @map("proveedor_id")
+  estado       String   @default("ABIERTA") @db.VarChar(20) // ABIERTA | PARCIAL | COMPLETADA | CANCELADA
+  observaciones String? @db.Text
+  usuarioId    Int      @map("usuario_id")
+  fecha        DateTime @default(now())
+
+  proveedor Tercero            @relation(fields: [proveedorId], references: [id])
+  usuario   Usuario            @relation(fields: [usuarioId], references: [id])
+  detalles  OrdenDetalle[]
+  ingresos  DocumentoIngreso[]
+
+  @@map("ordenes_compra")
+}
+
+model OrdenDetalle {
+  id           Int    @id @default(autoincrement())
+  ordenId      Int    @map("orden_id")
+  referenciaId Int    @map("referencia_id")
+  cantidad     Decimal @db.Decimal(15, 4)
+  costoUnitario Decimal @db.Decimal(15, 4) @map("costo_unitario")
+
+  orden      OrdenCompra       @relation(fields: [ordenId], references: [id], onDelete: Cascade)
+  referencia ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+
+  @@map("orden_detalle")
+}
+
+/// Documento de ingreso: entrada física soportada por factura del proveedor — RF-06
+model DocumentoIngreso {
+  id              Int      @id @default(autoincrement())
+  consecutivo     String   @unique @db.VarChar(50)
+  ordenCompraId   Int?     @map("orden_compra_id") // null = compra directa
+  proveedorId     Int      @map("proveedor_id")
+  facturaProveedor String  @db.VarChar(100) @map("factura_proveedor")
+  estado          String   @default("CERRADO") @db.VarChar(20) // BORRADOR | CERRADO | ANULADO
+  motivoAnulacion String?  @db.Text @map("motivo_anulacion")
+  usuarioAnulaId  Int?     @map("usuario_anula_id")
+  fechaAnulacion  DateTime? @map("fecha_anulacion")
+  usuarioCreaId   Int      @map("usuario_crea_id")
+  fecha           DateTime @default(now())
+
+  ordenCompra  OrdenCompra?    @relation(fields: [ordenCompraId], references: [id])
+  proveedor    Tercero         @relation(fields: [proveedorId], references: [id])
+  usuarioCrea  Usuario         @relation("ingresoCreador", fields: [usuarioCreaId], references: [id])
+  detalles     IngresoDetalle[]
+
+  @@map("documentos_ingreso")
+}
+
+model IngresoDetalle {
+  id              Int      @id @default(autoincrement())
+  documentoId     Int      @map("documento_id")
+  referenciaId    Int      @map("referencia_id")
+  cantidad        Decimal  @db.Decimal(15, 4) // en unidad base
+  costoUnitario   Decimal  @db.Decimal(15, 4) @map("costo_unitario")
+  fechaVencimiento DateTime? @map("fecha_vencimiento") // obligatoria si el producto controla vencimiento — RF-12
+
+  documento  DocumentoIngreso @relation(fields: [documentoId], references: [id], onDelete: Cascade)
+  referencia ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+
+  @@map("ingreso_detalles")
+}
+
+// ------------------------------------------------------------
+// VENTAS Y FACTURACIÓN — RF-08, RF-09, RF-17
+// ------------------------------------------------------------
+model Venta {
+  id          Int      @id @default(autoincrement())
+  clienteId   Int?     @map("cliente_id") // null = consumidor final
+  usuarioId   Int      @map("usuario_id")
+  reservaId   Int?     @unique @map("reserva_id") // si proviene de conversión de reserva — RF-10
+  subtotal    Decimal  @default(0) @db.Decimal(15, 4)
+  descuento   Decimal  @default(0) @db.Decimal(15, 4)
+  impuestos   Decimal  @default(0) @db.Decimal(15, 4)
+  total       Decimal  @default(0) @db.Decimal(15, 4)
+  fecha       DateTime @default(now())
+
+  cliente   Tercero?     @relation(fields: [clienteId], references: [id])
+  usuario   Usuario      @relation(fields: [usuarioId], references: [id])
+  reserva   Reserva?     @relation(fields: [reservaId], references: [id])
+  detalles  VentaDetalle[]
+  factura   Factura?
+  devoluciones DevolucionCliente[]
+
+  @@map("ventas")
+}
+
+model VentaDetalle {
+  id            Int     @id @default(autoincrement())
+  ventaId       Int     @map("venta_id")
+  referenciaId  Int     @map("referencia_id")
+  cantidad      Decimal @db.Decimal(15, 4)
+  precioUnitario Decimal @db.Decimal(15, 4) @map("precio_unitario")
+  descuento     Decimal @default(0) @db.Decimal(15, 4)
+  ivaPorcentaje Decimal @default(19) @db.Decimal(5, 2) @map("iva_porcentaje")
+  subtotal      Decimal @db.Decimal(15, 4)
+  devuelto      Decimal @default(0) @db.Decimal(15, 4) // acumulado devuelto — RF-18
+
+  venta      Venta             @relation(fields: [ventaId], references: [id], onDelete: Cascade)
+  referencia ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+  garantias  Garantia[]
+  devoluciones DevolucionClienteDetalle[]
+
+  @@map("venta_detalles")
+}
+
+/// Factura con consecutivo interno; DIAN queda como estructura preparada — RF-17
+model Factura {
+  id          Int      @id @default(autoincrement())
+  ventaId     Int      @unique @map("venta_id")
+  consecutivo String   @unique @db.VarChar(50)
+  tipo        String   @default("INTERNA") @db.VarChar(20) // INTERNA | ELECTRONICA
+  estado      String   @default("EMITIDA") @db.VarChar(20) // EMITIDA | ANULADA
+  // Campos DIAN (stub — decisión pendiente 13.2)
+  cufe        String?  @db.VarChar(100)
+  xmlDian     String?  @db.Text @map("xml_dian")
+  fechaEmision DateTime @default(now()) @map("fecha_emision")
+
+  venta Venta @relation(fields: [ventaId], references: [id])
+
+  @@map("facturas")
+}
+
+// ------------------------------------------------------------
+// RESERVAS — RF-05, RF-10
+// ------------------------------------------------------------
+model Reserva {
+  id          Int      @id @default(autoincrement())
+  consecutivo String   @unique @db.VarChar(50)
+  clienteId   Int      @map("cliente_id")
+  pedidoRef   String   @db.VarChar(60) @map("pedido_ref")
+  fechaLimite DateTime @map("fecha_limite")
+  estado      String   @default("ACTIVA") @db.VarChar(20) // ACTIVA | LIBERADA | COMPLETADA
+  motivoLiberacion String? @db.Text @map("motivo_liberacion")
+  usuarioId   Int      @map("usuario_id")
+  fecha       DateTime @default(now())
+  fechaLiberacion DateTime? @map("fecha_liberacion")
+
+  cliente  Tercero          @relation(fields: [clienteId], references: [id])
+  usuario  Usuario          @relation(fields: [usuarioId], references: [id])
+  detalles ReservaDetalle[]
+  venta    Venta?
+
+  @@map("reservas")
+}
+
+model ReservaDetalle {
+  id           Int    @id @default(autoincrement())
+  reservaId    Int    @map("reserva_id")
+  referenciaId Int    @map("referencia_id")
+  cantidad     Decimal @db.Decimal(15, 4)
+
+  reserva    Reserva           @relation(fields: [reservaId], references: [id], onDelete: Cascade)
+  referencia ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+
+  @@map("reserva_detalles")
+}
+
+// ------------------------------------------------------------
+// DEVOLUCIONES — RF-11 (proveedor), RF-18 (clientes)
+// ------------------------------------------------------------
+model DevolucionCliente {
+  id            Int      @id @default(autoincrement())
+  consecutivo   String   @unique @db.VarChar(50)
+  ventaId       Int      @map("venta_id")
+  usuarioRecibe Int      @map("usuario_recibe")
+  usuarioAprueba Int     @map("usuario_aprueba") // autorización superior — RF-18
+  motivo        String   @db.Text
+  fecha         DateTime @default(now())
+
+  venta    Venta                     @relation(fields: [ventaId], references: [id])
+  usuarioRecibeRel Usuario            @relation("devCliRecibe", fields: [usuarioRecibe], references: [id])
+  usuarioApruebaRel Usuario           @relation("devCliAprueba", fields: [usuarioAprueba], references: [id])
+  detalles DevolucionClienteDetalle[]
+
+  @@map("devoluciones_cliente")
+}
+
+model DevolucionClienteDetalle {
+  id             Int    @id @default(autoincrement())
+  devolucionId   Int    @map("devolucion_id")
+  referenciaId   Int    @map("referencia_id")
+  ventaDetalleId Int    @map("venta_detalle_id")
+  cantidad       Decimal @db.Decimal(15, 4)
+  estadoReingreso String @db.VarChar(15) @map("estado_reingreso") // DISPONIBLE | DANADO
+
+  devolucion    DevolucionCliente @relation(fields: [devolucionId], references: [id], onDelete: Cascade)
+  referencia    ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+  ventaDetalle  VentaDetalle      @relation(fields: [ventaDetalleId], references: [id])
+
+  @@map("devolucion_cliente_detalle")
+}
+
+model DevolucionProveedor {
+  id             Int      @id @default(autoincrement())
+  consecutivo    String   @unique @db.VarChar(50)
+  proveedorId    Int      @map("proveedor_id")
+  usuarioId      Int      @map("usuario_id")
+  motivo         String   @db.Text
+  documentoIngresoId Int? @map("documento_ingreso_id")
+  fecha          DateTime @default(now())
+
+  proveedor Tercero                   @relation(fields: [proveedorId], references: [id])
+  usuario   Usuario                   @relation(fields: [usuarioId], references: [id])
+  detalles  DevolucionProveedorDetalle[]
+
+  @@map("devoluciones_proveedor")
+}
+
+model DevolucionProveedorDetalle {
+  id           Int    @id @default(autoincrement())
+  devolucionId Int    @map("devolucion_id")
+  referenciaId Int    @map("referencia_id")
+  cantidad     Decimal @db.Decimal(15, 4) // sale del saldo DAÑADO
+
+  devolucion DevolucionProveedor @relation(fields: [devolucionId], references: [id], onDelete: Cascade)
+  referencia ReferenciaVendible  @relation(fields: [referenciaId], references: [id])
+
+  @@map("devolucion_proveedor_detalle")
+}
+
+// ------------------------------------------------------------
+// AJUSTES Y CONTEOS FÍSICOS — RF-04, RF-19
+// ------------------------------------------------------------
+model Ajuste {
+  id              Int      @id @default(autoincrement())
+  consecutivo     String   @unique @db.VarChar(50)
+  tipo            String   @db.VarChar(10) // ENTRADA | SALIDA
+  concepto        String   @db.VarChar(40) // CONTEO_FISICO, MERMA, ERROR_DIGITACION, MIGRACION...
+  justificacion   String   @db.Text
+  estado          String   @default("PENDIENTE") @db.VarChar(15) // PENDIENTE | APROBADO | RECHAZADO
+  usuarioSolicita Int      @map("usuario_solicita")
+  usuarioAprueba  Int?     @map("usuario_aprueba")
+  fecha           DateTime @default(now())
+  fechaAprobacion DateTime? @map("fecha_aprobacion")
+
+  usuarioSolicitaRel Usuario @relation("ajusteSolicita", fields: [usuarioSolicita], references: [id])
+  usuarioApruebaRel  Usuario? @relation("ajusteAprueba", fields: [usuarioAprueba], references: [id])
+  detalles AjusteDetalle[]
+
+  @@map("ajustes")
+}
+
+model AjusteDetalle {
+  id           Int    @id @default(autoincrement())
+  ajusteId     Int    @map("ajuste_id")
+  referenciaId Int    @map("referencia_id")
+  cantidadSistema Decimal @db.Decimal(15, 4) @map("cantidad_sistema")
+  cantidadContada Decimal? @db.Decimal(15, 4) @map("cantidad_contada") // para CONTEO_FISICO
+  cantidadAjuste  Decimal @db.Decimal(15, 4) @map("cantidad_ajuste") // delta aplicado (+/-)
+
+  ajuste     Ajuste            @relation(fields: [ajusteId], references: [id], onDelete: Cascade)
+  referencia ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+
+  @@map("ajuste_detalles")
+}
+
+// ------------------------------------------------------------
+// VENCIMIENTOS Y GARANTÍAS — RF-12, RF-13
+// ------------------------------------------------------------
+/// Baja por vencimiento: nivel de referencia con autorización administrativa
+/// (la granularidad unidad/lote es decisión pendiente 13.3 — se documenta el supuesto)
+model BajaVencimiento {
+  id          Int      @id @default(autoincrement())
+  consecutivo String   @unique @db.VarChar(50)
+  referenciaId Int     @map("referencia_id")
+  cantidad    Decimal  @db.Decimal(15, 4)
+  motivo      String   @db.Text
+  usuarioId   Int      @map("usuario_id")
+  fecha       DateTime @default(now())
+
+  referencia ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+  usuario    Usuario            @relation("bajasVencimiento", fields: [usuarioId], references: [id])
+
+  @@map("bajas_vencimiento")
+}
+
+/// La garantía nace con la venta de un producto parametrizado — RF-13
+model Garantia {
+  id            Int      @id @default(autoincrement())
+  ventaDetalleId Int     @map("venta_detalle_id")
+  referenciaId  Int      @map("referencia_id")
+  fechaInicio   DateTime @default(now()) @map("fecha_inicio") // = fecha de la factura (supuesto documentado)
+  mesesCobertura Int     @map("meses_cobertura")
+  fechaFin      DateTime @map("fecha_fin")
+
+  ventaDetalle VentaDetalle       @relation(fields: [ventaDetalleId], references: [id], onDelete: Cascade)
+  referencia   ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+
+  @@map("garantias")
+}
+
+// ------------------------------------------------------------
+// COSTOS Y PRECIOS — RF-15, RF-16
+// ------------------------------------------------------------
+model HistorialCosto {
+  id          Int      @id @default(autoincrement())
+  referenciaId Int     @map("referencia_id")
+  costoAnterior Decimal @db.Decimal(15, 4) @map("costo_anterior")
+  costoNuevo    Decimal @db.Decimal(15, 4) @map("costo_nuevo")
+  origen      String   @db.VarChar(30) // COMPRA, AJUSTE, DEVOLUCION
+  docId       Int?     @map("doc_id")
+  fecha       DateTime @default(now())
+
+  referencia ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+
+  @@index([referenciaId, fecha])
+  @@map("historial_costos")
+}
+
+model HistorialPrecio {
+  id             Int      @id @default(autoincrement())
+  referenciaId   Int      @map("referencia_id")
+  precioAnterior Decimal  @db.Decimal(15, 4) @map("precio_anterior")
+  precioNuevo    Decimal  @db.Decimal(15, 4) @map("precio_nuevo")
+  porcentajeIncremento Decimal? @db.Decimal(8, 4) @map("porcentaje_incremento")
+  usuarioId      Int      @map("usuario_id")
+  fecha          DateTime @default(now())
+
+  referencia ReferenciaVendible @relation(fields: [referenciaId], references: [id])
+  usuario    Usuario            @relation(fields: [usuarioId], references: [id])
+
+  @@index([referenciaId, fecha])
+  @@map("historial_precios")
+}
+
+// ------------------------------------------------------------
+// CIERRES MENSUALES — RF-20
+// ------------------------------------------------------------
+model CierreMensual {
+  id                Int      @id @default(autoincrement())
+  periodo           String   @unique @db.VarChar(7) // "2026-08"
+  estado            String   @default("CERRADO") @db.VarChar(15) // CERRADO | REABIERTO
+  usuarioCerroId    Int      @map("usuario_cerro_id")
+  fechaCierre       DateTime @default(now()) @map("fecha_cierre")
+  usuarioReabrioId  Int?     @map("usuario_reabrio_id")
+  fechaReapertura   DateTime? @map("fecha_reapertura")
+  motivoReapertura  String?  @db.Text @map("motivo_reapertura")
+
+  usuarioCerro   Usuario  @relation("cierreUsuario", fields: [usuarioCerroId], references: [id])
+  usuarioReabrio Usuario? @relation("reaperturaUsuario", fields: [usuarioReabrioId], references: [id])
+
+  @@map("cierres_mensuales")
+}
+
+// ------------------------------------------------------------
+// AUDITORÍA INMUTABLE — RF-22, RNF-01
+// ------------------------------------------------------------
+model AuditoriaLog {
+  id              BigInt   @id @default(autoincrement())
+  tablaAfectada   String   @db.VarChar(60) @map("tabla_afectada")
+  registroId      Int      @map("registro_id")
+  accion          String   @db.VarChar(20) // INSERT | UPDATE | DELETE | ANULACION | LOGIN | RECHAZO
+  entidad         String?  @db.VarChar(40) // módulo funcional
+  usuarioId       Int      @map("usuario_id")
+  direccionIp     String?  @db.VarChar(45) @map("direccion_ip")
+  estadoAnterior  Json?    @map("estado_anterior")
+  estadoNuevo     Json?    @map("estado_nuevo")
+  fechaEvento     DateTime @default(now()) @map("fecha_evento")
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@index([tablaAfectada, registroId])
+  @@index([fechaEvento])
+  @@index([usuarioId])
+  @@map("auditoria_log")
+}
+
+// ------------------------------------------------------------
+// CONSECUTIVOS ATÓMICOS (sin huecos) — RF-06, RF-07, RF-17
+// ------------------------------------------------------------
+model Consecutivo {
+  tipo         String @id @db.VarChar(30) // DI (ingreso), FV (factura venta), RES, AJ, DC, DP, BV, OC
+  prefijo      String @db.VarChar(10)
+  valorActual  Int    @default(0) @map("valor_actual")
+
+  @@map("consecutivos")
+}
+
+// ------------------------------------------------------------
+// MIGRACIÓN EXCEL — RF-23
+// ------------------------------------------------------------
+model Migracion {
+  id         Int      @id @default(autoincrement())
+  archivo    String   @db.VarChar(255)
+  tipo       String   @db.VarChar(30) // CATALOGO | TERCEROS | SALDOS_INICIALES
+  estado     String   @default("PROCESADA") @db.VarChar(20) // PROCESADA | RECHAZADA
+  totalFilas Int      @default(0) @map("total_filas")
+  filasOk    Int      @default(0) @map("filas_ok")
+  errores    Json? // [{fila, columna, mensaje}]
+  usuarioId  Int      @map("usuario_id")
+  fecha      DateTime @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@map("migraciones")
+}
+
+// ------------------------------------------------------------
+// PARÁMETROS DEL SISTEMA (país, IVA, redondeo) — RF-02, RNF-02
+// ------------------------------------------------------------
+model Parametro {
+  clave       String   @id @db.VarChar(60)
+  valor       String   @db.VarChar(255)
+  descripcion String?  @db.Text
+
+  @@map("parametros")
+}
+
+// ------------------------------------------------------------
+// INTEGRACIONES (API KEYS) — RF-25 (stub estructural)
+// ------------------------------------------------------------
+model ApiKey {
+  id        Int      @id @default(autoincrement())
+  nombre    String   @db.VarChar(100)
+  keyHash   String   @unique @db.VarChar(255) @map("key_hash")
+  activa    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("fecha_creacion")
+
+  @@map("api_keys")
+}

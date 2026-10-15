@@ -1,0 +1,19 @@
+# Dependencias
+node_modules/
+
+# Builds
+backend/dist/
+frontend/dist/
+
+# Variables de entorno (contienen secretos)
+backend/.env
+.env
+
+# Pruebas
+frontend/test-results/
+frontend/playwright-report/
+backend/.vitest/
+
+# Sistema operativo
+Thumbs.db
+.DS_Store

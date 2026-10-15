@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ferreteria
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ferreteria123}
+      POSTGRES_DB: ferreteria
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ferreteria -d ferreteria"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    # Exponer solo si se desea acceder a la BD desde el host:
+    # ports:
+    #   - "5432:5432"
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://ferreteria:${DB_PASSWORD:-ferreteria123}@db:5432/ferreteria?schema=public
+      JWT_SECRET: ${JWT_SECRET:-cambiar-este-secreto-en-produccion}
+      NODE_ENV: production
+      PORT: 3001
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
